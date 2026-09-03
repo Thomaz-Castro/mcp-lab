@@ -1,0 +1,25 @@
+{
+  "name": "mcp-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Laboratório ilustrado para aprender o Model Context Protocol (MCP) com Ollama: dois sistemas conversando e cada mensagem JSON-RPC visível na tela.",
+  "scripts": {
+    "dev": "tsx src/bridge/index.ts",
+    "cli": "tsx src/host/cli.ts",
+    "server": "tsx src/server/index.ts",
+    "inspector": "npx @modelcontextprotocol/inspector tsx src/server/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ws": "^8.21.3",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
