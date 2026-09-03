@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Lab</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">MCP <span>Lab</span></div>
+  <nav>
+    <button class="active" data-tab="live">Ao vivo</button>
+    <button data-tab="guide">Guia ilustrado</button>
+    <button data-tab="map">Mapa do repo</button>
+  </nav>
+  <div class="status">
+    <span class="pill" id="pill-ws">ponte: …</span>
+    <span class="pill" id="pill-server">servidor MCP: desconectado</span>
+    <span class="pill" id="pill-a">Ollama A: <b>…</b></span>
+    <span class="pill" id="pill-b">Ollama B: <b>…</b></span>
+  </div>
+</header>
+
+<main>
+<!-- ═══════════════════════════ AO VIVO ═══════════════════════════ -->
+<section id="live">
+  <div class="toolbar">
+    <button class="primary" id="btn-connect">▶ Conectar ao servidor MCP</button>
+    <button class="ghost" id="btn-disconnect" disabled>Desconectar</button>
+    <label><input type="checkbox" id="step"> Passo a passo</label>
+    <label class="manual-toggle"><input type="checkbox" id="manual"> <b>Modo manual</b> (você faz o papel da IA, sem Ollama)</label>
+    <button class="ghost" id="btn-next" disabled>Próximo › <span class="count" id="buffered" hidden>0</span></button>
+    <button class="ghost" id="btn-read" disabled title="O Host lê um resource — sem passar pelo modelo">Ler resource notas://todas</button>
+    <button class="ghost" id="btn-reset" disabled title="Zera o histórico que o Ollama A recebe (as mensagens da conversa)">Nova conversa</button>
+    <button class="ghost" id="btn-clear">Limpar tela</button>
+  </div>
+  <div class="chips" id="chips">
+    <button>Quanto é 17 * 23 + 5?</button>
+    <button>Que horas são agora?</button>
+    <button>Salve uma nota: comprar café</button>
+    <button>Liste minhas notas</button>
+    <button>Pergunte ao especialista o que é JSON-RPC</button>
+    <button>Liste os pedidos em aberto</button>
+    <button>Crie um pedido para Maria com dois cafés e um pão de queijo</button>
+    <button>Marque o pedido 2 como entregue</button>
+  </div>
+
+  <div class="stage">
+    <div class="diagram">
+      <div class="lanes">
+        <div class="lane user"><div class="ico">🧑</div><div class="name">Você</div><div class="sub">browser</div></div>
+        <div class="lane ollamaA"><div class="ico">🧠</div><div class="name">Ollama A</div><div class="sub" id="lane-a">modelo do host</div></div>
+        <div class="lane host"><div class="ico">🖥️</div><div class="name">Host + Cliente MCP</div><div class="sub">Sistema A · src/host</div></div>
+        <div class="lane server"><div class="ico">🧰</div><div class="name">Servidor MCP</div><div class="sub">Sistema B · src/server</div></div>
+        <div class="lane ollamaB"><div class="ico">🧠</div><div class="name">Ollama B</div><div class="sub" id="lane-b">modelo do servidor</div></div>
+      </div>
+      <div class="scroll" id="scroll">
+        <div class="empty" id="empty">
+          <div>
+            <b>Nada aconteceu ainda.</b><br>
+            Clique em <b>Conectar</b> para ver o handshake do MCP acontecer ao vivo:<br>
+            o Host sobe o servidor como processo filho e os dois trocam <code>initialize</code> por stdio.<br><br>
+            Ative <b>Passo a passo</b> para segurar cada mensagem e liberar uma por vez.
+          </div>
+        </div>
+        <svg id="seq" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </div>
+
+    <aside class="inspector">
+      <div class="insp-head">
+        <span class="kind" id="insp-kind" style="background:#8b95a7">inspetor</span>
+        <h3 id="insp-title">Clique em uma seta</h3>
+        <div class="meta" id="insp-meta">Cada seta é uma mensagem real. O JSON bruto aparece aqui embaixo.</div>
+      </div>
+      <div class="anatomy" id="anatomy"></div>
+      <div class="explain" id="explain">
+        O diagrama tem 5 raias. As setas <span style="color:var(--host)">amarelas</span> e <span style="color:var(--server)">roxas</span> são MCP (JSON-RPC por stdio).
+        As <span style="color:var(--ollamaA)">cianas</span> e <span style="color:var(--ollamaB)">azuis</span> são HTTP para o Ollama, e não fazem parte do MCP: é o Host e o Servidor falando com seus próprios modelos.
+      </div>
+      <pre class="json" id="json"></pre>
+    </aside>
+  </div>
+
+  <form class="manual" id="manual-panel" hidden>
+    <div class="manual-col">
+      <label>1. Escolha a tool <small>(lista que veio do <code>tools/list</code>)</small></label>
+      <select id="m-tool"></select>
+      <div class="m-desc" id="m-desc"></div>
+      <label>2. Preencha os argumentos <small>(campos gerados do <code>inputSchema</code>)</small></label>
+      <div id="m-fields"></div>
+    </div>
+    <div class="manual-col">
+      <label>3. Isto é o que a IA produziria. Você está produzindo no lugar dela:</label>
+      <pre class="json m-preview" id="m-preview"></pre>
+      <button type="submit" id="m-send">▶ Mandar tools/call ao servidor</button>
+      <div class="m-hint">O Host embrulha isso em JSON-RPC, escreve no stdin do servidor, o SDK acha a tool pelo <code>name</code>, valida os argumentos e chama o seu método.</div>
+    </div>
+  </form>
+  <form class="ask" id="ask">
+    <input id="q" placeholder="Pergunte algo… (o Host manda ao Ollama A, que decide se chama uma tool do servidor MCP)" autocomplete="off" disabled>
+    <button id="send" disabled>Enviar</button>
+  </form>
+  <div class="toast" id="toast"></div>
+</section>
+
+<!-- ═══════════════════════════ GUIA ═══════════════════════════ -->
+<section id="guide" hidden>
+<div class="guide"><div class="inner">
+  <h1>Como o MCP funciona, ilustrado</h1>
+  <p class="lead">Model Context Protocol é um protocolo para um programa que usa um modelo de IA (o <b>Host</b>) descobrir e usar capacidades de outros programas (<b>Servidores</b>) de forma padronizada. Tudo aqui está rodando no seu Mac: dois processos Node e dois modelos no Ollama.</p>
+
+  <h2>1. Os três papéis <small>host · client · server</small></h2>
+  <figure>
+    <svg viewBox="0 0 900 230" width="900" height="230">
+      <rect class="box h" x="20" y="30" width="400" height="170"/>
+      <text x="40" y="58" font-weight="700">HOST (Sistema A)</text>
+      <text class="m" x="40" y="76">o app que o usuário usa: Claude Desktop, Cursor, este lab</text>
+      <rect class="box a" x="40" y="95" width="160" height="80"/>
+      <text x="60" y="122">🧠 Modelo</text>
+      <text class="m" x="60" y="140">Ollama A</text>
+      <text class="m" x="60" y="156">decide o que fazer</text>
+      <rect class="box h" x="230" y="95" width="170" height="80"/>
+      <text x="250" y="122">🔌 Client MCP</text>
+      <text class="m" x="250" y="140">1 client por servidor</text>
+      <text class="m" x="250" y="156">fala JSON-RPC</text>
+      <path class="arr h" d="M 200 135 L 230 135" marker-end="url(#g-arrow)"/>
+      <path class="arr h" d="M 400 135 L 520 135" marker-end="url(#g-arrow)"/>
+      <path class="arr s dash" d="M 520 150 L 400 150" marker-end="url(#g-arrow)"/>
+      <text class="mono m" x="415" y="126">requests</text>
+      <text class="mono m" x="415" y="170">results / notifs</text>
+      <rect class="box s" x="520" y="30" width="360" height="170"/>
+      <text x="540" y="58" font-weight="700">SERVIDOR MCP (Sistema B)</text>
+      <text class="m" x="540" y="76">expõe capacidades; não sabe qual modelo o host usa</text>
+      <rect class="box s" x="540" y="95" width="100" height="80"/><text x="552" y="122">🔧 tools</text><text class="m" x="552" y="142">calcular…</text>
+      <rect class="box s" x="650" y="95" width="100" height="80"/><text x="660" y="122">📄 resources</text><text class="m" x="660" y="142">notas://</text>
+      <rect class="box s" x="760" y="95" width="100" height="80"/><text x="772" y="122">💬 prompts</text><text class="m" x="772" y="142">resumir…</text>
+      <text class="m" x="540" y="192">↳ consultar_especialista chama o Ollama B por conta própria</text>
+      <defs><marker id="g-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs>
+    </svg>
+    <figcaption>O modelo nunca fala MCP diretamente. Quem fala é o Client, dentro do Host. O modelo só vê "funções disponíveis" e devolve "quero chamar tal função".</figcaption>
+  </figure>
+
+  <h2>2. Transporte: como os bytes viajam <small>stdio neste lab</small></h2>
+  <figure>
+    <svg viewBox="0 0 900 200" width="900" height="200">
+      <rect class="box h" x="20" y="40" width="300" height="120"/>
+      <text x="40" y="70" font-weight="700">Processo do Host</text>
+      <text class="mono m" x="40" y="92">node src/bridge/index.ts</text>
+      <text class="m" x="40" y="118">spawn() do servidor como</text>
+      <text class="m" x="40" y="134">processo filho</text>
+      <rect class="box s" x="580" y="40" width="300" height="120"/>
+      <text x="600" y="70" font-weight="700">Processo do Servidor</text>
+      <text class="mono m" x="600" y="92">node src/server/index.ts</text>
+      <text class="m" x="600" y="118">lê stdin, escreve stdout</text>
+      <text class="m" x="600" y="134">logs SÓ no stderr</text>
+      <path class="arr h" d="M 320 80 L 580 80" marker-end="url(#g-arrow)"/>
+      <text class="mono m" x="370" y="72">stdin do filho ← 1 JSON por linha</text>
+      <path class="arr s" d="M 580 120 L 320 120" marker-end="url(#g-arrow)"/>
+      <text class="mono m" x="360" y="140">stdout do filho → 1 JSON por linha</text>
+      <path class="arr dot" stroke="#8b95a7" d="M 580 150 L 320 150" marker-end="url(#g-arrow)"/>
+      <text class="mono m" x="400" y="168">stderr (logs humanos)</text>
+    </svg>
+    <figcaption>Por isso <code>console.log</code> no servidor quebra tudo: ele escreveria texto no canal do protocolo. A alternativa ao stdio é o <b>Streamable HTTP</b>, com o mesmo JSON-RPC por cima de HTTP, usado para servidores remotos.</figcaption>
+  </figure>
+
+  <h2>3. A gramática: JSON-RPC 2.0 <small>só três formatos de mensagem</small></h2>
+  <div class="cards">
+    <div class="card req"><h4>Request <span style="color:var(--muted)">(tem id + method)</span></h4>
+      Espera uma resposta com o mesmo <code>id</code>. Pode ir nas duas direções.
+      <pre>{ "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": { "name": "calcular",
+              "arguments": { "expressao": "17*23+5" } } }</pre></div>
+    <div class="card res"><h4>Response <span style="color:var(--muted)">(id + result OU error)</span></h4>
+      Sempre casa com um request. Nunca tem <code>method</code>.
+      <pre>{ "jsonrpc": "2.0",
+  "id": 3,
+  "result": { "content": [
+     { "type": "text", "text": "17*23+5 = 396" } ] } }</pre></div>
+    <div class="card not"><h4>Notification <span style="color:var(--muted)">(method, SEM id)</span></h4>
+      "Fogo e esquece": ninguém responde.
+      <pre>{ "jsonrpc": "2.0",
+  "method": "notifications/message",
+  "params": { "level": "info",
+              "data": { "tool": "calcular" } } }</pre></div>
+  </div>
+  <div class="callout">No inspetor da aba <b>Ao vivo</b>, as etiquetas <i>id · method · result</i> acendem para mostrar qual dos três formatos você está olhando.</div>
+
+  <h2>4. Ciclo de vida de uma sessão <small>o que você vê ao clicar em Conectar</small></h2>
+  <figure>
+    <svg viewBox="0 0 900 380" width="900" height="380">
+      <text x="150" y="24" text-anchor="middle" font-weight="700" fill="#fbbf24">Host / Client</text>
+      <text x="750" y="24" text-anchor="middle" font-weight="700" fill="#a78bfa">Servidor</text>
+      <line x1="150" y1="34" x2="150" y2="370" class="dot" stroke="#243044"/>
+      <line x1="750" y1="34" x2="750" y2="370" class="dot" stroke="#243044"/>
+      <g class="mono">
+        <path class="arr h" d="M150 60 L750 60" marker-end="url(#g-arrow)"/><text x="450" y="52" text-anchor="middle">initialize {protocolVersion, capabilities, clientInfo}</text>
+        <path class="arr s dash" d="M750 95 L150 95" marker-end="url(#g-arrow)"/><text x="450" y="87" text-anchor="middle">result {protocolVersion, capabilities, serverInfo, instructions}</text>
+        <path class="arr dot" stroke="#8b95a7" d="M150 130 L750 130" marker-end="url(#g-arrow)"/><text x="450" y="122" text-anchor="middle">notifications/initialized  (agora a sessão está aberta)</text>
+        <path class="arr h" d="M150 175 L750 175" marker-end="url(#g-arrow)"/><text x="450" y="167" text-anchor="middle">tools/list</text>
+        <path class="arr s dash" d="M750 205 L150 205" marker-end="url(#g-arrow)"/><text x="450" y="197" text-anchor="middle">result {tools:[{name, description, inputSchema}]}</text>
+        <path class="arr h" d="M150 250 L750 250" marker-end="url(#g-arrow)"/><text x="450" y="242" text-anchor="middle">tools/call {name, arguments}</text>
+        <path class="arr dot" stroke="#8b95a7" d="M750 280 L150 280" marker-end="url(#g-arrow)"/><text x="450" y="272" text-anchor="middle">notifications/message (log, opcional)</text>
+        <path class="arr s dash" d="M750 310 L150 310" marker-end="url(#g-arrow)"/><text x="450" y="302" text-anchor="middle">result {content:[{type:"text", text}], isError?}</text>
+        <path class="arr h" d="M150 355 L750 355" marker-end="url(#g-arrow)"/><text x="450" y="347" text-anchor="middle">… ping, resources/read, prompts/get, e no fim o processo é encerrado</text>
+      </g>
+      <rect x="20" y="40" width="70" height="100" rx="6" fill="#fbbf2422"/><text class="m" x="55" y="95" text-anchor="middle" transform="rotate(-90 55 95)">HANDSHAKE</text>
+      <rect x="20" y="150" width="70" height="70" rx="6" fill="#a78bfa22"/><text class="m" x="55" y="185" text-anchor="middle" transform="rotate(-90 55 185)">DESCOBRIR</text>
+      <rect x="20" y="230" width="70" height="95" rx="6" fill="#60a5fa22"/><text class="m" x="55" y="278" text-anchor="middle" transform="rotate(-90 55 278)">USAR</text>
+    </svg>
+    <figcaption>O SDK faz o handshake sozinho dentro de <code>client.connect()</code>. Você só vê porque o <code>TapTransport</code> grampeia o transporte.</figcaption>
+  </figure>
+
+  <h2>5. As primitivas <small>quem decide usar cada uma</small></h2>
+  <div class="cards">
+    <div class="card t"><h4>🔧 Tools — <em>o modelo decide</em></h4>Funções com <code>inputSchema</code> (JSON Schema). O Host entrega a lista ao modelo; o modelo escolhe chamar. Resultado volta como <code>content</code>.<pre>server.registerTool('calcular',
+  { inputSchema: { expressao: z.string() } },
+  async ({ expressao }) => ({ content: [...] }))</pre></div>
+    <div class="card r"><h4>📄 Resources — <em>o app decide</em></h4>Dados endereçados por URI, como arquivos. O Host lê quando quiser e injeta no contexto. Podem ter templates (<code>nota://{id}</code>).<pre>server.registerResource('todas-as-notas',
+  'notas://todas', { mimeType: 'text/plain' },
+  async (uri) => ({ contents: [...] }))</pre></div>
+    <div class="card p"><h4>💬 Prompts — <em>o usuário decide</em></h4>Templates de mensagens que o servidor oferece (aparecem como "/comandos" em alguns hosts).<pre>server.registerPrompt('resumir_notas',
+  { argsSchema: { estilo: z.string().optional() } },
+  ({ estilo }) => ({ messages: [...] }))</pre></div>
+  </div>
+  <p>Existe também o caminho inverso, em que o <b>servidor pede algo ao cliente</b>: <code>sampling/createMessage</code> (servidor pede para o modelo do host gerar texto), <code>elicitation/create</code> (servidor pede um dado ao usuário) e <code>roots/list</code> (quais pastas o host expõe). Este lab não usa esses, mas note que neste desenho o servidor poderia ter pedido ao Ollama A em vez de ter o seu Ollama B. Ter o próprio é uma escolha de arquitetura, não uma regra.</p>
+
+  <h2>6. Onde o Ollama entra <small>a tradução que o Host faz</small></h2>
+  <figure>
+    <svg viewBox="0 0 900 300" width="900" height="300">
+      <text x="120" y="24" text-anchor="middle" font-weight="700" fill="#22d3ee">Ollama A</text>
+      <text x="450" y="24" text-anchor="middle" font-weight="700" fill="#fbbf24">Host</text>
+      <text x="780" y="24" text-anchor="middle" font-weight="700" fill="#a78bfa">Servidor MCP</text>
+      <line x1="120" y1="34" x2="120" y2="290" class="dot" stroke="#243044"/>
+      <line x1="450" y1="34" x2="450" y2="290" class="dot" stroke="#243044"/>
+      <line x1="780" y1="34" x2="780" y2="290" class="dot" stroke="#243044"/>
+      <g class="mono">
+        <path class="arr h" d="M450 60 L780 60" marker-end="url(#g-arrow)"/><text x="615" y="52" text-anchor="middle">tools/list</text>
+        <path class="arr s dash" d="M780 85 L450 85" marker-end="url(#g-arrow)"/><text x="615" y="77" text-anchor="middle">[{name, description, inputSchema}]</text>
+        <rect class="box" x="330" y="98" width="240" height="26"/><text x="450" y="115" text-anchor="middle" class="m">traduz → {type:"function", function:{…}}</text>
+        <path class="arr a" d="M450 145 L120 145" marker-end="url(#g-arrow)"/><text x="285" y="137" text-anchor="middle">POST /api/chat {messages, tools}</text>
+        <path class="arr a dash" d="M120 175 L450 175" marker-end="url(#g-arrow)"/><text x="285" y="167" text-anchor="middle">message.tool_calls: [{function:{name, arguments}}]</text>
+        <path class="arr h" d="M450 205 L780 205" marker-end="url(#g-arrow)"/><text x="615" y="197" text-anchor="middle">tools/call {name, arguments}</text>
+        <path class="arr s dash" d="M780 235 L450 235" marker-end="url(#g-arrow)"/><text x="615" y="227" text-anchor="middle">result {content:[{text}]}</text>
+        <path class="arr a" d="M450 265 L120 265" marker-end="url(#g-arrow)"/><text x="285" y="257" text-anchor="middle">POST /api/chat (+ {role:"tool", content})</text>
+        <path class="arr a dash" d="M120 288 L450 288" marker-end="url(#g-arrow)"/><text x="285" y="282" text-anchor="middle" class="m">resposta final em texto</text>
+      </g>
+    </svg>
+    <figcaption>Esse é o "loop agentico": modelo → tool → modelo, até o modelo responder sem pedir ferramentas. Está em <code>Agent.ask()</code> em <code>src/host/agent.ts</code>.</figcaption>
+  </figure>
+
+  <h2>7. Por que dois modelos? <small>Sistema A e Sistema B</small></h2>
+  <p>O <b>Ollama A</b> é o cérebro do Host: vê as tools e decide. O <b>Ollama B</b> é privado do servidor, usado dentro da tool <code>consultar_especialista</code>. O Host não sabe que existe um modelo lá; para ele é só uma tool que demora um pouco mais. O servidor conta o que está fazendo via <code>notifications/message</code>, e é assim que o diagrama consegue desenhar a raia do Ollama B. Isso ilustra a ideia central: <b>MCP é uma fronteira</b>. De um lado do <code>tools/call</code> pode haver qualquer coisa, inclusive outra IA.</p>
+
+  <h2>8. Colocando MCP num sistema que já existe <small>o caso real</small></h2>
+  <p>Você tem uma classe de serviço, um repositório, um client de API. Nada disso muda. Você escreve <b>um adaptador</b>: uma tool por método que quer expor. Neste repo, o "sistema de hoje" é <code>src/legado/pedidos.ts</code> e o adaptador é <code>src/server/adaptador-pedidos.ts</code>.</p>
+  <figure>
+    <svg viewBox="0 0 900 330" width="900" height="330">
+      <rect class="box a" x="20" y="120" width="150" height="90"/>
+      <text x="95" y="150" text-anchor="middle">🧠 IA</text>
+      <text class="m" x="95" y="170" text-anchor="middle">escreve JSON:</text>
+      <text class="mono" x="95" y="190" text-anchor="middle">{name, arguments}</text>
+      <path class="arr h" d="M170 165 L230 165" marker-end="url(#g-arrow)"/>
+      <rect class="box h" x="230" y="120" width="130" height="90"/>
+      <text x="295" y="150" text-anchor="middle">🖥️ Host</text>
+      <text class="m" x="295" y="170" text-anchor="middle">copia para</text>
+      <text class="mono" x="295" y="190" text-anchor="middle">tools/call</text>
+      <path class="arr h" d="M360 165 L420 165" marker-end="url(#g-arrow)"/>
+      <text class="mono m" x="390" y="155" text-anchor="middle">stdio</text>
+      <rect class="box s" x="420" y="30" width="460" height="270"/>
+      <text x="440" y="58" font-weight="700">Processo do servidor MCP</text>
+      <rect class="box s" x="440" y="75" width="200" height="205"/>
+      <text x="540" y="100" text-anchor="middle" font-weight="700">SDK do MCP</text>
+      <text class="m" x="452" y="125">1. lê a linha JSON</text>
+      <text class="m" x="452" y="145">2. acha "pedidos_criar"</text>
+      <text class="m" x="452" y="160">   no Map de tools</text>
+      <text class="m" x="452" y="185">3. valida arguments</text>
+      <text class="m" x="452" y="200">   com o inputSchema (zod)</text>
+      <text class="m" x="452" y="225">4. chama o callback ─►</text>
+      <text class="m" x="452" y="255">6. embrulha o retorno</text>
+      <text class="m" x="452" y="270">   em {result:{content}}</text>
+      <rect class="box h" x="660" y="75" width="200" height="90"/>
+      <text x="760" y="100" text-anchor="middle" font-weight="700">Adaptador (você)</text>
+      <text class="mono m" x="672" y="122">registerTool('pedidos_criar',</text>
+      <text class="mono m" x="672" y="137">  {inputSchema}, async (args)</text>
+      <text class="mono m" x="672" y="152">  => sistema.criar(args))</text>
+      <path class="arr h" d="M760 165 L760 195" marker-end="url(#g-arrow)"/>
+      <text class="m" x="770" y="185">5.</text>
+      <rect class="box u" x="660" y="195" width="200" height="85"/>
+      <text x="760" y="220" text-anchor="middle" font-weight="700">Seu sistema (intacto)</text>
+      <text class="mono m" x="672" y="242">class SistemaDePedidos {</text>
+      <text class="mono m" x="672" y="257">  criar(cliente, itens) {…}</text>
+      <text class="mono m" x="672" y="272">}</text>
+    </svg>
+    <figcaption>A IA "atinge" o método porque escreveu o <code>name</code> certo. Do passo 1 ao 6 é código comum do SDK; o passo 5 é a única linha sua. Se o <code>arguments</code> não bater com o schema, o passo 4 nunca acontece.</figcaption>
+  </figure>
+  <div class="cards">
+    <div class="card t"><h4>O sistema de hoje</h4><pre>// src/legado/pedidos.ts — sem MCP, sem IA
+export class SistemaDePedidos {
+  criar(cliente: string, itens: string[]) {
+    console.error('[SistemaDePedidos] criar() executado');
+    // ... valida, salva, retorna
+  }
+}</pre></div>
+    <div class="card p"><h4>O adaptador</h4><pre>// src/server/adaptador-pedidos.ts
+server.registerTool('pedidos_criar', {
+  description: 'Cria um pedido novo…',   // a IA lê isto
+  inputSchema: {                          // o SDK valida isto
+    cliente: z.string().min(1),
+    itens: z.array(z.string()).min(1),
+  },
+}, async ({ cliente, itens }) => {
+  const p = sistema.criar(cliente, itens); // ← seu método
+  return { content: [{ type: 'text', text: `Pedido #${p.id}` }] };
+});</pre></div>
+  </div>
+  <div class="callout">Prova na aba <b>Ao vivo</b>: peça "Crie um pedido para Maria com dois cafés". Depois do <code>tools/call pedidos_criar</code> aparece uma caixinha cinza na raia do servidor: <code>stderr: [SistemaDePedidos] criar(…) executado</code>. É o <code>console.error</code> de dentro do seu método. A IA chegou lá.</div>
+</div></div>
+</section>
+
+<!-- ═══════════════════════════ MAPA ═══════════════════════════ -->
+<section id="map" hidden>
+<div class="guide"><div class="inner">
+  <h1>Mapa do repositório</h1>
+  <p class="lead">Tudo em TypeScript, executado com <code>tsx</code>. Sem bundler, sem framework no front.</p>
+  <div class="tree">
+mcp-lab/<br>
+├── src/<br>
+│   ├── <b>legado/pedidos.ts</b>   <i>um "sistema que já existe": classe comum, sem IA, sem MCP</i><br>
+│   ├── server/<br>
+│   │   ├── <b>index.ts</b>        <i>Sistema B: o servidor MCP. Tools, resources, prompts, logging. Chama o Ollama B.</i><br>
+│   │   └── <b>adaptador-pedidos.ts</b> <i>a "porta" MCP do sistema legado: uma tool por método</i><br>
+│   ├── host/<br>
+│   │   ├── <b>agent.ts</b>        <i>Sistema A: Client MCP + loop com Ollama A. Emite LabEvents.</i><br>
+│   │   └── <b>cli.ts</b>          <i>mesma coisa no terminal: npm run cli</i><br>
+│   ├── shared/<br>
+│   │   ├── <b>tap-transport.ts</b> <i>o grampo: embrulha o transporte stdio e observa cada JSON-RPC</i><br>
+│   │   ├── <b>ollama.ts</b>       <i>fetch para /api/chat com tools</i><br>
+│   │   └── <b>events.ts</b>       <i>tipos do LabEvent (raias, fases, kinds)</i><br>
+│   └── <b>bridge/index.ts</b>     <i>HTTP + WebSocket: serve o site e retransmite os eventos</i><br>
+├── web/                    <i>este site (index.html, app.js, style.css)</i><br>
+├── docs/                   <i>anotações de estudo</i><br>
+└── README.md
+  </div>
+  <table>
+    <tr><th>Comando</th><th>O que faz</th></tr>
+    <tr><td><code>npm run dev</code></td><td>Sobe a ponte em <code>http://localhost:4321</code> com este site.</td></tr>
+    <tr><td><code>npm run cli</code></td><td>Mesmo laboratório no terminal. <code>VERBOSE=1</code> imprime o JSON bruto.</td></tr>
+    <tr><td><code>npm run server</code></td><td>Só o servidor, esperando JSON-RPC no stdin. Cole um <code>initialize</code> na mão para sentir o protocolo.</td></tr>
+    <tr><td><code>npm run inspector</code></td><td>Abre o MCP Inspector oficial apontando para o servidor deste repo.</td></tr>
+    <tr><td><code>OLLAMA_MODEL=… OLLAMA_MODEL_B=…</code></td><td>Troca os modelos do host e do servidor.</td></tr>
+  </table>
+  <h2>Ideias para os próximos passos</h2>
+  <table>
+    <tr><th>Experimento</th><th>O que aprende</th></tr>
+    <tr><td>Adicionar uma tool nova em <code>server/index.ts</code> e recarregar</td><td>Ela aparece no <code>tools/list</code> e o Ollama A passa a poder chamá-la, sem tocar no host.</td></tr>
+    <tr><td>Trocar o transporte stdio por Streamable HTTP</td><td>O JSON-RPC é o mesmo, só muda o cano. Compare os eventos.</td></tr>
+    <tr><td>Fazer o servidor usar <code>sampling/createMessage</code> em vez do Ollama B</td><td>O servidor pedindo ao modelo do host. Aparece como request na direção servidor → host.</td></tr>
+    <tr><td>Conectar este servidor ao Claude Desktop ou Claude Code</td><td>O mesmo <code>src/server/index.ts</code> funciona em qualquer host MCP.</td></tr>
+  </table>
+</div></div>
+</section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
